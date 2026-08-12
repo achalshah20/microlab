@@ -1,5 +1,22 @@
 # microlab — Implementation task list
 
+> **Status (M0 implemented).** Phases 0–6 are built and tested; Phase 7's gate
+> run is blocked on a GPU session. Deviations from the plan as written, all
+> deliberate:
+>
+> - **Hydra + OmegaConf structured configs** replaced the plain-dataclass plan.
+> - **fp16 unscaling takes the real optimizer**, not a proxy — the original
+>   sketch would have made `GradScaler` unscale twice, silently shrinking every
+>   gradient by the loss scale.
+> - **`flops_per_token` gained an explicit LM-head term.** It omitted the tied
+>   head and would have inflated every reported MFU by 16%; `tests/test_shapes.py`
+>   now pins it against a per-module hook walk.
+> - **The write-up is generated, not written** (`microlab shapes` →
+>   `docs/M0_SHAPES.md`), so it cannot drift from the model.
+> - **A synthetic corpus was added** so the whole pipeline runs offline and in
+>   CI. It does not substitute for the TinyStories gate.
+
+
 Derived from the roadmap doc. Scope of this document: **M0 in full detail**, plus the
 cross-cutting foundations M0 forces us to design correctly, plus a thin note on how
 M1–M7 attach. M1+ tasks are deliberately *not* expanded — the roadmap's stated failure

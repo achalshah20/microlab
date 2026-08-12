@@ -1,0 +1,55 @@
+# Tiny CPU config: the whole pipeline end to end in a couple of minutes.
+#
+# This is what CI runs and what you run before you have a GPU session. It is an
+# integration test, not an experiment: the corpus is the synthetic grammar and
+# the model is far too small to say anything about modeling. It exists to prove
+# the loop, the checkpointing and the resume path work on the machine in front
+# of you.
+
+model:
+  # The synthetic grammar exhausts its merge pairs at 493 tokens; 512 pads that
+  # to a GEMM-friendly multiple of 64. The padded tail is masked at sampling
+  # time (Transformer.generate's max_valid_id).
+  vocab_size: 512
+  d_model: 128
+  n_layers: 4
+  n_heads: 4
+  n_kv_heads: 2
+  max_seq_len: 128
+  ffn_multiple_of: 32
+  tie_embeddings: true
+  dropout: 0.0
+
+data:
+  train_bin: data/synthetic/train.bin
+  val_bin: data/synthetic/val.bin
+  tokenizer_path: data/synthetic/tokenizer.json
+  batch_size: 16
+  grad_accum_steps: 1
+  seq_len: 128
+
+optim:
+  lr: 1.0e-3
+  weight_decay: 0.1
+  grad_clip: 1.0
+  schedule: cosine
+  warmup_steps: 20
+  min_lr_ratio: 0.1
+
+train:
+  max_steps: 300
+  seed: 1337
+  precision: fp32        # fp16 needs CUDA; CPU runs the reference path
+  device: cpu
+  log_interval: 10
+  eval_interval: 50
+  eval_batches: 10
+  sample_interval: 100
+  sample_prompt: "One day"
+  sample_max_new_tokens: 64
+  checkpoint_every_minutes: 1
+  checkpoint_every_steps: 100
+  keep_last_n: 3
+  out_dir: runs
+  run_id: m0_cpu
+  auto_resume: true

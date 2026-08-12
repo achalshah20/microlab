@@ -1,0 +1,63 @@
+# M0 gate config: ~10M non-embedding params on TinyStories, one T4.
+#
+# Gate: val loss < 1.6 with grammatical multi-sentence samples, plus a verified
+# bit-exact resume across a deliberately killed session.
+#
+# Budget: ~6 T4-hours (0.2 Kaggle-weeks). Sized so a single 12-hour session
+# clears it with room to spare, which means the M0 gate itself does not depend
+# on the chaining harness working — the chaining harness is *tested* here, on a
+# run short enough that a failure costs an afternoon rather than a week.
+
+model:
+  vocab_size: 8192
+  d_model: 512
+  n_layers: 8
+  n_heads: 8
+  # GQA with 4 groups: at this size the quality cost is nil and the KV cache is
+  # 4x smaller, which is what makes the M6 serving work measurable on a T4.
+  n_kv_heads: 2
+  max_seq_len: 512
+  rope_theta: 10000.0
+  norm_eps: 1.0e-5
+  ffn_multiple_of: 64
+  tie_embeddings: true
+  bias: false
+  dropout: 0.0
+  init_std: 0.02
+
+data:
+  train_bin: data/tinystories/train.bin
+  val_bin: data/tinystories/val.bin
+  tokenizer_path: data/tinystories/tokenizer.json
+  batch_size: 32
+  grad_accum_steps: 4    # global batch 128 x 512 = 65,536 tokens/step
+  seq_len: 512
+
+optim:
+  lr: 6.0e-4
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-8
+  weight_decay: 0.1
+  grad_clip: 1.0
+  schedule: cosine
+  warmup_steps: 200
+  min_lr_ratio: 0.1
+
+train:
+  max_steps: 12000       # ~790M tokens, ~2 epochs of TinyStories
+  seed: 1337
+  precision: fp16        # T4 is Turing: fp16 only
+  device: auto
+  compile: false         # M2 turns this on, with an eager fallback path
+  log_interval: 10
+  eval_interval: 250
+  eval_batches: 40
+  sample_interval: 1000
+  sample_prompt: "Once upon a time"
+  sample_max_new_tokens: 200
+  checkpoint_every_minutes: 20
+  keep_last_n: 3
+  out_dir: runs
+  run_id: m0
+  auto_resume: true

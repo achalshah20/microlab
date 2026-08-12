@@ -1,0 +1,17 @@
+# Runs and data are artifacts, not source. Checkpoints go to HF Hub (M1+),
+# metrics get published in write-ups, and neither belongs in git history.
+runs/
+data/
+*.bin
+*.manifest.json
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+outputs/

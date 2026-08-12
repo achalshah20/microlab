@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "microlab"
+version = "0.0.1"
+description = "Training a language model from scratch on free-tier compute"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # torch is intentionally a floor, not a pin: the wheel must match the CUDA
+    # driver of whatever free-tier box we land on. The exact version used for a
+    # run is recorded in the run record, and docs/COMPUTE.md lists the versions
+    # each provider ships.
+    "torch>=2.4",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "regex>=2023.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+
+[project.scripts]
+microlab = "microlab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "slow: tests that train for more than a few seconds",
+    "gpu: tests that require CUDA",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E741"]
