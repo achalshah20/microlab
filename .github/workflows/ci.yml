@@ -29,6 +29,10 @@ jobs:
           cache: pip
 
       - name: Install (CPU torch)
+        # torch comes from the CPU index first so the job does not pull ~2.5 GB
+        # of CUDA wheels it cannot use. Everything else resolves from the
+        # package metadata, which is deliberately the only source of truth —
+        # tests/test_packaging.py fails if src/ imports something undeclared.
         run: |
           python -m pip install --upgrade pip
           pip install torch --index-url https://download.pytorch.org/whl/cpu
