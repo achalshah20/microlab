@@ -4,7 +4,6 @@ Training a language model from scratch on free-tier compute — tokenizer, data
 pipeline, kernels, training, post-training, inference and RL, built in order,
 each milestone gated on a number rather than on the code existing.
 
-The full plan is in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 **Current status: M0 (end-to-end training loop) implemented; the M0 gate run is
 pending a GPU session.**
 
