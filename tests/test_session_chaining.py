@@ -22,76 +22,11 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pytest
-from omegaconf import OmegaConf
 
-from microlab.config import to_dict
-from microlab.data.packed import ShardManifest, write_shard
-from microlab.data.synthetic import generate_corpus
-from microlab.tokenizer.bpe import BPETokenizer
 from microlab.train.checkpoint import list_checkpoints
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.fixture
-def cli_workspace(tmp_path, train_cfg):
-    """A config directory and shards laid out the way the CLI expects."""
-    docs = generate_corpus(2000, seed=0)
-    tokenizer = BPETokenizer()
-    tokenizer.train("\n".join(docs), vocab_size=400)
-    tok_path = tokenizer.save(tmp_path / "tokenizer.json")
-
-    for split, subset in (("train", docs[:1900]), ("val", docs[1900:])):
-        ids: list[int] = []
-        for doc in subset:
-            ids.extend(tokenizer.encode_ordinary(doc))
-            ids.append(tokenizer.eos_id)
-        write_shard(
-            tmp_path / f"{split}.bin",
-            np.asarray(ids, dtype=np.uint16),
-            ShardManifest(
-                n_tokens=len(ids),
-                vocab_size=tokenizer.vocab_size,
-                tokenizer_sha=tokenizer.sha(),
-                source="chaining-test",
-                source_split=split,
-                eos_id=tokenizer.eos_id,
-            ),
-        )
-
-    raw = to_dict(train_cfg)
-    raw["model"]["vocab_size"] = tokenizer.vocab_size
-    raw["data"].update(
-        {
-            "train_bin": str(tmp_path / "train.bin"),
-            "val_bin": str(tmp_path / "val.bin"),
-            "tokenizer_path": str(tok_path),
-            "batch_size": 8,
-            "grad_accum_steps": 1,
-        }
-    )
-    raw["train"].update(
-        {
-            "max_steps": 400,
-            "run_id": "chain_e2e",
-            "out_dir": str(tmp_path / "runs"),
-            "log_interval": 1,
-            "eval_interval": 0,
-            "sample_interval": 0,
-            # Checkpoint often: the test needs at least one to exist before the
-            # kill arrives.
-            "checkpoint_every_steps": 5,
-            "checkpoint_every_minutes": 1e9,
-            "keep_last_n": 3,
-        }
-    )
-
-    config_dir = tmp_path / "configs"
-    config_dir.mkdir()
-    OmegaConf.save(OmegaConf.create(raw), config_dir / "chain.yaml")
-    return {"config_dir": config_dir, "run_dir": tmp_path / "runs" / "chain_e2e"}
 
 
 def _launch(config_dir: Path, overrides: list[str] | None = None) -> subprocess.Popen:

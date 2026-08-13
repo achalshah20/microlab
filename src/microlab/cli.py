@@ -93,6 +93,11 @@ def cmd_sample(args: argparse.Namespace) -> int:
         top_k=args.top_k,
         eos_id=tokenizer.eos_id,
         generator=gen,
+        # Without this the sampler can emit an id from the padded tail of the
+        # vocabulary — real model outputs that the tokenizer has no bytes for —
+        # and decode raises. The trainer's sampler already masks them; this path
+        # did not, so `microlab sample` crashed on any lightly-trained model.
+        max_valid_id=tokenizer.vocab_size,
     )
     print(f"# checkpoint: {path.name} (step {payload['step']})", file=sys.stderr)
     print(tokenizer.decode(out[0].tolist()))
