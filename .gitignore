@@ -1,7 +1,14 @@
 # Runs and data are artifacts, not source. Checkpoints go to HF Hub (M1+),
 # metrics get published in write-ups, and neither belongs in git history.
-runs/
-data/
+#
+# These MUST stay anchored with a leading slash. Written as `data/`, the pattern
+# matches a directory of that name at any depth — which silently excluded the
+# entire `src/microlab/data/` package from the repository. Everything still
+# worked locally, and CI failed with `No module named 'microlab.data'`.
+# tests/test_packaging.py::test_all_source_files_are_tracked guards this now.
+/runs/
+/data/
+/outputs/
 *.bin
 *.manifest.json
 
@@ -14,4 +21,3 @@ dist/
 .pytest_cache/
 .ruff_cache/
 .ipynb_checkpoints/
-outputs/

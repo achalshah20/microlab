@@ -15,6 +15,7 @@ does, in milliseconds and with no network.
 from __future__ import annotations
 
 import ast
+import subprocess
 import sys
 import tomllib
 from importlib.metadata import packages_distributions
@@ -116,6 +117,55 @@ def test_declared_dependencies_are_actually_imported():
     imported = {_distribution_for(m) for m in _third_party_imports()}
     unused = _declared_dependencies() - imported
     assert not unused, f"declared but never imported in src/: {sorted(unused)}"
+
+
+def test_all_source_files_are_tracked():
+    """Every Python file under src/ must be committed.
+
+    `.gitignore` contained an unanchored `data/`, which matches a directory of
+    that name at *any* depth — so the whole `src/microlab/data/` package was
+    silently excluded from the repository. Nothing local noticed: the files were
+    on disk, the tests passed, the package imported. CI failed on a fresh
+    checkout with `No module named 'microlab.data'`.
+
+    A local test suite cannot see this, because it runs against the working
+    tree rather than against what was committed. Asking git directly is the only
+    check that distinguishes the two.
+    """
+    # Skip outside a git work tree — an sdist or an unpacked archive has no
+    # index to consult, and the question is meaningless there. Erroring instead
+    # would make the suite fail for anyone testing an installed copy.
+    inside = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if inside.returncode != 0:
+        pytest.skip("not a git work tree; nothing to compare the working tree against")
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "src"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    tracked_paths = {REPO_ROOT / p for p in tracked}
+
+    on_disk = {
+        p
+        for p in SRC.rglob("*.py")
+        if "__pycache__" not in p.parts and ".egg-info" not in str(p)
+    }
+    untracked = sorted(str(p.relative_to(REPO_ROOT)) for p in on_disk - tracked_paths)
+
+    assert not untracked, (
+        "source files exist on disk but are not tracked by git:\n"
+        + "\n".join(f"  {p}" for p in untracked)
+        + "\nA fresh clone would be missing them. Check .gitignore for an "
+        "unanchored pattern (write `/data/`, not `data/`)."
+    )
 
 
 @pytest.mark.parametrize("module", sorted(OPTIONAL_IMPORTS))
