@@ -20,7 +20,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "ruff>=0.4"]
+# ruff is pinned exactly, not floored. A linter that floats between the
+# developer's machine and CI produces failures that cannot be reproduced
+# locally — which is precisely what happened on the first CI run of this repo.
+dev = ["pytest>=7.4", "ruff==0.16.2"]
 
 [project.scripts]
 microlab = "microlab.cli:main"
@@ -39,7 +42,18 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Tell ruff where first-party code lives. Without this it infers package
+# ownership from the working directory, so an editable install resolves
+# `microlab` as first-party locally but third-party on a CI runner — and the
+# two disagree about import order in exactly the files that import both
+# `microlab` and a third-party package.
+src = ["src", "."]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E741"]
+
+[tool.ruff.lint.isort]
+# Belt and braces with `src` above: state the first-party package explicitly so
+# classification does not depend on install state or ruff's inference at all.
+known-first-party = ["microlab"]
