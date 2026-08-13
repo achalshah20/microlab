@@ -105,23 +105,63 @@ class BPETokenizer:
         sequences: list[list[int]] = [list(c.encode("utf-8")) for c in chunk_counts]
         weights: list[int] = list(chunk_counts.values())
 
+        # Pair counts are maintained *incrementally*. The obvious implementation
+        # recomputes every pair in the corpus on every merge, which is
+        # O(n_merges * corpus); at 8k merges over 20M characters that is tens of
+        # minutes of pure Python. A merge only ever changes the sequences that
+        # actually contain the merged pair, so an index from pair -> sequences
+        # lets each step touch a tiny fraction of the corpus.
+        #
+        # The chosen merge and the resulting `merges` dict are identical either
+        # way — tests/test_tokenizer.py pins that against a naive reference.
+        stats: dict[tuple[int, int], int] = {}
+        pair_to_seqs: dict[tuple[int, int], set[int]] = {}
+
+        def add_pairs(index: int, seq: list[int], weight: int) -> None:
+            for p in zip(seq, seq[1:], strict=False):
+                stats[p] = stats.get(p, 0) + weight
+                pair_to_seqs.setdefault(p, set()).add(index)
+
+        def remove_pairs(seq: list[int], weight: int) -> None:
+            for p in zip(seq, seq[1:], strict=False):
+                remaining = stats.get(p, 0) - weight
+                if remaining > 0:
+                    stats[p] = remaining
+                else:
+                    # Drop exhausted pairs so `max` never selects a dead one and
+                    # an empty `stats` still means "no pairs left".
+                    stats.pop(p, None)
+
+        for index, (seq, weight) in enumerate(zip(sequences, weights, strict=True)):
+            add_pairs(index, seq, weight)
+
         self.merges = {}
         for i in range(n_merges):
-            stats: Counter[tuple[int, int]] = Counter()
-            for seq, w in zip(sequences, weights, strict=True):
-                for pair in zip(seq, seq[1:], strict=False):
-                    stats[pair] += w
             if not stats:
                 if verbose:
-                    print(f"no pairs left after {i} merges; stopping early")
+                    print(f"no pairs left after {i} merges; stopping early", flush=True)
                 break
 
             pair = max(stats, key=lambda p: (stats[p], -p[0], -p[1]))
             new_id = 256 + i
-            sequences = [_merge(seq, pair, new_id) for seq in sequences]
+            count = stats[pair]
+
+            # The index is allowed to hold stale entries: a sequence listed under
+            # a pair it no longer contains simply merges to itself, and its
+            # contributions are removed and re-added unchanged. Keeping it
+            # approximate avoids the bookkeeping of pruning on every merge.
+            for index in list(pair_to_seqs.get(pair, ())):
+                seq, weight = sequences[index], weights[index]
+                remove_pairs(seq, weight)
+                merged = _merge(seq, pair, new_id)
+                sequences[index] = merged
+                add_pairs(index, merged, weight)
+
+            stats.pop(pair, None)
+            pair_to_seqs.pop(pair, None)
             self.merges[pair] = new_id
             if verbose and (i + 1) % 500 == 0:
-                print(f"merge {i + 1}/{n_merges}: {pair} -> {new_id} (count {stats[pair]})")
+                print(f"merge {i + 1}/{n_merges}: {pair} -> {new_id} (count {count})", flush=True)
 
         base = 256 + len(self.merges)
         self.special_tokens = {tok: base + i for i, tok in enumerate(specials)}

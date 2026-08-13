@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import random
+import string
+from collections import Counter
+
 import pytest
 
 from microlab.data.synthetic import generate_corpus
@@ -142,6 +146,85 @@ class TestSerialization:
         """Streaming generation can end mid-UTF-8; decode must not raise."""
         ids = trained.encode_ordinary("日本語")
         assert isinstance(trained.decode(ids[:1]), str)
+
+
+def _naive_train(text: str, vocab_size: int, n_specials: int = 1) -> dict:
+    """Reference BPE trainer: recompute every pair count on every merge.
+
+    This is the obvious implementation, and the one the optimized trainer has
+    to agree with exactly. Keeping it here — rather than deleting it when the
+    incremental version landed — is what makes the optimization checkable
+    instead of merely plausible.
+    """
+    scratch = BPETokenizer()
+    n_merges = vocab_size - 256 - n_specials
+    chunk_counts = Counter(scratch._compiled.findall(text))
+    sequences = [list(c.encode("utf-8")) for c in chunk_counts]
+    weights = list(chunk_counts.values())
+
+    merges: dict[tuple[int, int], int] = {}
+    for i in range(n_merges):
+        stats: Counter[tuple[int, int]] = Counter()
+        for seq, w in zip(sequences, weights, strict=True):
+            for pair in zip(seq, seq[1:], strict=False):
+                stats[pair] += w
+        if not stats:
+            break
+        pair = max(stats, key=lambda p: (stats[p], -p[0], -p[1]))
+        sequences = [_merge(seq, pair, 256 + i) for seq in sequences]
+        merges[pair] = 256 + i
+    return merges
+
+
+class TestIncrementalTrainingParity:
+    """The fast trainer must learn exactly the merges the naive one would.
+
+    The incremental version maintains pair counts and a pair -> sequence index
+    instead of rescanning the corpus per merge. That is a large speedup (the
+    naive cost scales with corpus x merges) and a large opportunity to change
+    the learned vocabulary by accident — a subtly different tie-break or a
+    stale count shifts one merge, and every later merge diverges from there.
+    A tokenizer that is *nearly* right silently changes what every downstream
+    run was trained on.
+    """
+
+    def test_matches_naive_on_diverse_text(self):
+        # Randomized words, not the synthetic grammar: the grammar has so few
+        # distinct chunks that it exhausts pairs after ~240 merges and never
+        # exercises the index at scale.
+        rng = random.Random(0)
+        vocabulary = [
+            "".join(rng.choice(string.ascii_lowercase) for _ in range(rng.randint(2, 9)))
+            for _ in range(800)
+        ]
+        text = " ".join(rng.choice(vocabulary) for _ in range(8000))
+
+        tokenizer = BPETokenizer()
+        tokenizer.train(text, vocab_size=700)
+        assert tokenizer.merges == _naive_train(text, 700)
+        assert len(tokenizer.merges) > 100, "corpus too small to exercise the index"
+
+    def test_matches_naive_with_unicode_and_punctuation(self):
+        text = ("héllo wörld! " * 200) + ("日本語 テスト。" * 200) + ("a,b;c:d " * 200)
+        tokenizer = BPETokenizer()
+        tokenizer.train(text, vocab_size=400)
+        assert tokenizer.merges == _naive_train(text, 400)
+
+    def test_matches_naive_when_pairs_are_exhausted(self):
+        """Early stopping must trigger at the same point in both."""
+        text = "ab ab ab cd cd "
+        tokenizer = BPETokenizer()
+        tokenizer.train(text, vocab_size=1000)
+        assert tokenizer.merges == _naive_train(text, 1000)
+
+    def test_round_trips_after_incremental_training(self):
+        rng = random.Random(1)
+        text = " ".join(
+            "".join(rng.choice("abcdefg") for _ in range(rng.randint(1, 6))) for _ in range(3000)
+        )
+        tokenizer = BPETokenizer()
+        tokenizer.train(text, vocab_size=500)
+        assert tokenizer.decode(tokenizer.encode_ordinary(text)) == text
 
 
 def test_merge_helper_replaces_non_overlapping_occurrences():
