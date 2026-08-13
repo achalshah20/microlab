@@ -148,6 +148,61 @@ class TestSerialization:
         assert isinstance(trained.decode(ids[:1]), str)
 
 
+class TestChunkCache:
+    """Memoized chunk encoding must be invisible in the output.
+
+    Two failure modes, both silent: the cache returning something other than a
+    fresh encode, and — worse — surviving a change of merges, so the tokenizer
+    keeps encoding with a vocabulary it no longer has.
+    """
+
+    def test_cache_does_not_change_encoding(self, trained):
+        text = "One day Lily went to the park. Lily found a red ball. " * 20
+        cached = trained.encode_ordinary(text)
+        uncached: list[int] = []
+        for chunk in trained._compiled.findall(text):
+            uncached.extend(trained._encode_chunk(chunk.encode("utf-8")))
+        assert cached == uncached
+
+    def test_cache_populates_and_is_reused(self, trained):
+        trained._chunk_cache.clear()
+        first = trained.encode_ordinary("the cat sat on the mat")
+        assert trained._chunk_cache, "nothing was cached"
+        assert trained.encode_ordinary("the cat sat on the mat") == first
+
+    def test_retraining_invalidates_the_cache(self):
+        """A stale cache would encode with the previous vocabulary."""
+        tokenizer = BPETokenizer()
+        tokenizer.train("aaaa bbbb aaaa bbbb " * 50, vocab_size=300)
+        tokenizer.encode_ordinary("aaaa bbbb")
+        assert tokenizer._chunk_cache
+
+        tokenizer.train("xyzxyz qrs xyzxyz qrs " * 50, vocab_size=300)
+        assert tokenizer._chunk_cache == {}, "cache survived a merge-table change"
+        # And the fresh encoding must match a from-scratch computation.
+        got = tokenizer.encode_ordinary("aaaa bbbb")
+        expected: list[int] = []
+        for chunk in tokenizer._compiled.findall("aaaa bbbb"):
+            expected.extend(tokenizer._encode_chunk(chunk.encode("utf-8")))
+        assert got == expected
+
+    def test_loaded_tokenizer_starts_with_an_empty_cache(self, trained, tmp_path):
+        reloaded = BPETokenizer.load(trained.save(tmp_path / "t.json"))
+        assert reloaded._chunk_cache == {}
+        assert reloaded.encode_ordinary("hello world") == trained.encode_ordinary("hello world")
+
+    def test_cache_is_bounded(self, trained, monkeypatch):
+        """A corpus of all-unique chunks must not grow the cache without limit."""
+        monkeypatch.setattr(BPETokenizer, "_CHUNK_CACHE_MAX", 10)
+        trained._chunk_cache.clear()
+        text = " ".join(f"w{i}" for i in range(200))
+        encoded = trained.encode_ordinary(text)
+        assert len(trained._chunk_cache) <= 10
+        # Over the cap it falls back to recomputing, so output is unaffected.
+        trained._chunk_cache.clear()
+        assert trained.encode_ordinary(text) == encoded
+
+
 def _naive_train(text: str, vocab_size: int, n_specials: int = 1) -> dict:
     """Reference BPE trainer: recompute every pair count on every merge.
 

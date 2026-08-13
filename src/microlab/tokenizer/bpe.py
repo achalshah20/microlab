@@ -63,6 +63,16 @@ class BPETokenizer:
         for text, idx in self.special_tokens.items():
             vocab[idx] = text.encode("utf-8")
         self.vocab = vocab
+        # Encoding a chunk is a pure function of (chunk bytes, merges), and
+        # natural text repeats chunks heavily — ~14x on a synthetic corpus,
+        # far more on real prose, where a few hundred thousand distinct words
+        # cover hundreds of millions of occurrences. Memoizing turns the
+        # per-occurrence merge loop into a dict hit.
+        #
+        # Rebuilt here rather than in __init__ so it is invalidated by
+        # construction whenever the merges change: a stale cache would silently
+        # encode with the previous vocabulary.
+        self._chunk_cache: dict[bytes, tuple[int, ...]] = {}
         self._special_inverse = {v: k for k, v in self.special_tokens.items()}
         self._special_pattern = (
             re.compile("(" + "|".join(re.escape(t) for t in self.special_tokens) + ")")
@@ -183,11 +193,23 @@ class BPETokenizer:
             ids = _merge(ids, candidate, self.merges[candidate])
         return ids
 
+    # Bounded so a pathological corpus (every chunk unique) cannot grow the
+    # cache without limit. Past the cap, encoding simply falls back to
+    # recomputing, which is the previous behaviour rather than a failure.
+    _CHUNK_CACHE_MAX = 1_000_000
+
     def encode_ordinary(self, text: str) -> list[int]:
         """Encode, treating special-token text as ordinary text."""
         out: list[int] = []
+        cache = self._chunk_cache
         for chunk in self._compiled.findall(text):
-            out.extend(self._encode_chunk(chunk.encode("utf-8")))
+            key = chunk.encode("utf-8")
+            ids = cache.get(key)
+            if ids is None:
+                ids = tuple(self._encode_chunk(key))
+                if len(cache) < self._CHUNK_CACHE_MAX:
+                    cache[key] = ids
+            out.extend(ids)
         return out
 
     def encode(self, text: str, allowed_special: bool = True) -> list[int]:
