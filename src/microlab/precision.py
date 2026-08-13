@@ -95,6 +95,29 @@ class FullPrecision(PrecisionStrategy):
         return True
 
 
+def bf16_natively_supported(device: int = 0) -> bool:
+    """True only where bf16 runs on hardware, i.e. Ampere (sm_80) or newer.
+
+    Deliberately does *not* use ``torch.cuda.is_bf16_supported()``. Recent
+    PyTorch returns True from that when bf16 is merely **emulated**, so on a
+    Turing T4 it reports::
+
+        Tesla T4 sm_75 ... bf16=True
+
+    which is true in the sense that the ops run, and useless in the sense that
+    they run through a software path far slower than the fp16 tensor cores
+    sitting unused next to them. A guard built on that check does not fire on
+    the exact hardware it exists to protect.
+
+    Compute capability is the authoritative signal and does not drift between
+    PyTorch releases: bf16 tensor cores arrive with sm_80.
+    """
+    if not torch.cuda.is_available():
+        return False
+    major, _minor = torch.cuda.get_device_capability(device)
+    return major >= 8
+
+
 class BFloat16(PrecisionStrategy):
     """bf16 autocast. No loss scaling: bf16 has fp32's exponent range."""
 
@@ -103,13 +126,20 @@ class BFloat16(PrecisionStrategy):
 
     def __init__(self, device_type: str) -> None:
         super().__init__(device_type)
-        if device_type == "cuda" and not torch.cuda.is_bf16_supported():
+        if device_type == "cuda" and not bf16_natively_supported():
             # Fail at startup rather than 40 minutes into a run. On a T4 this is
             # the single most likely config mistake.
+            emulated = torch.cuda.is_bf16_supported()
             raise RuntimeError(
-                "precision=bf16 requested but this GPU does not support bf16 "
+                "precision=bf16 requested but this GPU has no native bf16 "
                 f"({torch.cuda.get_device_name(0)}, capability "
                 f"{torch.cuda.get_device_capability(0)}). Turing (T4) needs precision=fp16."
+                + (
+                    " torch.cuda.is_bf16_supported() reports True here because bf16 is"
+                    " emulated in software; running on it would be far slower than fp16."
+                    if emulated
+                    else ""
+                )
             )
 
     def autocast(self) -> AbstractContextManager:

@@ -83,7 +83,11 @@ def describe_device(device: torch.device | str = "cuda") -> dict[str, object]:
                 "capability": f"{props.major}.{props.minor}",
                 "total_memory_gb": round(props.total_memory / 1e9, 2),
                 "multi_processor_count": props.multi_processor_count,
-                "bf16_supported": torch.cuda.is_bf16_supported(),
+                # Reported separately because they disagree on Turing: PyTorch
+                # says bf16 is "supported" when it is emulated in software. Only
+                # the native flag should drive a precision decision.
+                "bf16_native": props.major >= 8,
+                "bf16_reported_by_torch": torch.cuda.is_bf16_supported(),
                 # sm_75 is Turing: fp16-only training and no FlashAttention-2.
                 "is_turing": props.major == 7 and props.minor == 5,
             }

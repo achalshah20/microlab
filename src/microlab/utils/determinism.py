@@ -100,7 +100,12 @@ def environment_info() -> dict[str, Any]:
         info["gpu_name"] = torch.cuda.get_device_name(0)
         info["gpu_capability"] = list(torch.cuda.get_device_capability(0))
         info["gpu_count"] = torch.cuda.device_count()
-        info["bf16_supported"] = torch.cuda.is_bf16_supported()
+        # Recorded as two fields because they disagree on Turing: PyTorch counts
+        # software emulation as support, so a T4 reports True. The run record is
+        # evidence about the hardware a run actually used, and a single
+        # ambiguous flag makes it evidence for the wrong conclusion.
+        info["bf16_native"] = torch.cuda.get_device_capability(0)[0] >= 8
+        info["bf16_reported_by_torch"] = torch.cuda.is_bf16_supported()
     return info
 
 
