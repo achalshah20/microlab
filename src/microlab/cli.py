@@ -59,6 +59,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         val_fraction=args.val_fraction,
         limit=args.limit,
         seed=args.seed,
+        tokenizer_train_chars=args.tokenizer_train_chars,
     )
     print(json.dumps(result.__dict__, indent=2, default=str))
     return 0
@@ -152,6 +153,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_prep.add_argument("--val-fraction", type=float, default=0.02)
     p_prep.add_argument("--limit", type=int, default=None)
     p_prep.add_argument("--seed", type=int, default=0)
+    p_prep.add_argument(
+        "--tokenizer-train-chars",
+        type=int,
+        default=20_000_000,
+        help="cap on characters used to train the tokenizer (the slow, "
+        "pure-Python step); merge frequencies are stable well below this",
+    )
     p_prep.set_defaults(func=cmd_prepare)
 
     p_sample = sub.add_parser("sample", help="sample from the latest checkpoint")

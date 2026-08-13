@@ -99,8 +99,33 @@ def prepare(
     tok_path = out_dir / "tokenizer.json"
     t0 = time.time()
     tokenizer = BPETokenizer()
-    train_text = "\n".join(train_docs)[:tokenizer_train_chars]
-    tokenizer.train(train_text, vocab_size=vocab_size, special_tokens=DEFAULT_SPECIAL_TOKENS)
+
+    # Accumulate only up to the cap. `"\n".join(train_docs)[:cap]` would
+    # materialize the entire corpus as one string first — ~2 GB for TinyStories
+    # — purely to throw away all but the first few tens of MB, on top of the
+    # `docs` list already holding it.
+    chunks: list[str] = []
+    total = 0
+    for doc in train_docs:
+        chunks.append(doc)
+        total += len(doc) + 1
+        if total >= tokenizer_train_chars:
+            break
+    train_text = "\n".join(chunks)[:tokenizer_train_chars]
+    if verbose:
+        print(
+            f"training tokenizer on {len(train_text):,} chars "
+            f"({len(chunks):,} docs), target vocab {vocab_size}...",
+            flush=True,
+        )
+    # verbose=True so a multi-minute merge loop reports progress rather than
+    # looking hung. This is pure Python; M1's Rust trainer is what makes it fast.
+    tokenizer.train(
+        train_text,
+        vocab_size=vocab_size,
+        special_tokens=DEFAULT_SPECIAL_TOKENS,
+        verbose=verbose,
+    )
     tokenizer.save(tok_path)
     if verbose:
         print(
@@ -113,12 +138,26 @@ def prepare(
     for split, split_docs in (("train", train_docs), ("val", val_docs)):
         t0 = time.time()
         ids: list[int] = []
-        for doc in split_docs:
+        # Encoding millions of documents in pure Python takes tens of minutes.
+        # Report throughput as it goes: a silent hour is indistinguishable from
+        # a hang, and on a preemptible box the difference decides whether you
+        # wait or kill it.
+        report_every = max(1, len(split_docs) // 20)
+        for i, doc in enumerate(split_docs):
             ids.extend(tokenizer.encode_ordinary(doc))
             # EOS between documents so the model learns where a story ends —
             # without it, training teaches the model to run one story into the
             # next and generation never terminates.
             ids.append(eos)
+            if verbose and i and i % report_every == 0:
+                rate = i / max(time.time() - t0, 1e-9)
+                remaining = (len(split_docs) - i) / max(rate, 1e-9)
+                print(
+                    f"  {split}: {i:,}/{len(split_docs):,} docs "
+                    f"({100 * i / len(split_docs):.0f}%), {len(ids):,} tokens, "
+                    f"{rate:,.0f} docs/s, ~{remaining / 60:.1f} min left",
+                    flush=True,
+                )
         tokens = np.asarray(ids, dtype=np.uint16)
         bin_path = out_dir / f"{split}.bin"
         write_shard(
